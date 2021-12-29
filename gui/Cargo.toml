@@ -1,0 +1,11 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+tts-loop = { path = "../tts-loop" }
+
+[build-dependencies]
+cmake = "0.1"
+bindgen = "0.59"

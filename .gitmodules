@@ -1,0 +1,3 @@
+[submodule "flite-sys/vendor"]
+	path = flite-sys/vendor
+	url = https://github.com/festvox/flite
