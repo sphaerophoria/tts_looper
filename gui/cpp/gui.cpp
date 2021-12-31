@@ -13,8 +13,9 @@ class Backend : public QObject
     Q_PROPERTY(QString output MEMBER output_ NOTIFY OutputChanged)
 
 public:
-    Backend(GuiCallbacks callbacks)
+    Backend(GuiCallbacks callbacks, const void* data)
         : callbacks_(callbacks)
+        , data_(data)
     {}
 
 public slots:
@@ -48,7 +49,7 @@ public slots:
         auto byte_arr = text.toUtf8();
         callbacks_.start_tts_loop(
             reinterpret_cast<const uint8_t *>(byte_arr.data()), byte_arr.size(),
-            num_iters, play, callbacks_.data);
+            num_iters, play, data_);
     }
 
 signals:
@@ -56,15 +57,17 @@ signals:
 
 private:
     GuiCallbacks callbacks_;
+    const void* data_;
     QString output_;
 };
 
 struct Gui
 {
-    Backend backend;
+    GuiCallbacks callbacks;
+    Backend* backend = nullptr;
 
     Gui(GuiCallbacks callbacks)
-        : backend(callbacks)
+        : callbacks(callbacks)
     {}
 };
 
@@ -76,24 +79,33 @@ void DestroyGui(Gui* gui) {
     delete gui;
 }
 
-void Exec(Gui* gui) {
+void Exec(Gui* gui, const void* data) {
     Q_INIT_RESOURCE(res);
     int argc = 0;
     QGuiApplication app(argc, nullptr);
+
+    Backend backend(gui->callbacks, data);
+    gui->backend = &backend;
+
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty("backend", &gui->backend);
+    engine.rootContext()->setContextProperty("backend", gui->backend);
     engine.load(QUrl("qrc:/Main.qml"));
+
     app.exec();
+
+    gui->backend = nullptr;
 }
 
 void PushOutput(Gui* gui, const uint8_t* text, uint64_t text_len) {
-    gui->backend.PushOutput(QString::fromUtf8(reinterpret_cast<const char*>(text), text_len));
+    if (gui->backend) {
+        gui->backend->PushOutput(QString::fromUtf8(reinterpret_cast<const char*>(text), text_len));
+    }
 }
 
 void ResetOutput(Gui* gui) {
-    gui->backend.ResetOutput();
+    if (gui->backend) {
+        gui->backend->ResetOutput();
+    }
 }
-
-
 
 #include "gui.moc"

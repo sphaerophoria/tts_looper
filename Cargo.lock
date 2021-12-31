@@ -382,6 +382,7 @@ version = "0.1.0"
 dependencies = [
  "bindgen 0.59.2",
  "cmake",
+ "log",
  "tts-loop",
 ]
 
@@ -1012,6 +1013,8 @@ version = "0.1.0"
 dependencies = [
  "deepspeech",
  "flite",
+ "rodio",
+ "thiserror",
 ]
 
 [[package]]
@@ -1019,9 +1022,11 @@ name = "tts-loop-app"
 version = "0.1.0"
 dependencies = [
  "deepspeech",
+ "env_logger",
  "flite",
  "gui",
  "hound",
+ "log",
  "rodio",
  "tts-loop",
 ]

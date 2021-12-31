@@ -1,8 +1,8 @@
-use std::cell::{RefCell, RefMut};
+use log::{error, warn};
 use std::convert::TryInto;
 use std::ffi::c_void;
-use std::sync::mpsc::{self, Sender};
-use tts_loop::TtsLooper;
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 mod imp {
     #![allow(non_snake_case)]
@@ -12,13 +12,15 @@ mod imp {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-type TtsRequest = (String, i32, bool);
-
-struct GuiInner {
-    tx: Sender<TtsRequest>,
+pub enum GuiRequest {
+    Start {
+        text: String,
+        num_iters: i32,
+        play_audio: bool,
+    },
+    Shutdown,
 }
 
-#[derive(Copy, Clone)]
 struct ImpHandle {
     handle: *mut imp::Gui,
 }
@@ -31,69 +33,58 @@ impl std::ops::Deref for ImpHandle {
     }
 }
 
+impl Drop for ImpHandle {
+    fn drop(&mut self) {
+        unsafe { imp::DestroyGui(self.handle) };
+    }
+}
+
 unsafe impl Send for ImpHandle {}
 unsafe impl Sync for ImpHandle {}
 
-pub struct Gui {
-    handle: ImpHandle,
-    _inner: Box<RefCell<GuiInner>>,
+pub struct GuiHandle {
+    handle: Arc<ImpHandle>,
 }
 
-impl Gui {
-    pub fn new(mut tts_looper: TtsLooper) -> Gui {
-        let (tx, rx) = mpsc::channel();
-
-        let inner = GuiInner { tx };
-
-        let mut inner = Box::new(RefCell::new(inner));
-
-        let handle = unsafe {
-            imp::MakeGui(imp::GuiCallbacks {
-                data: inner.as_mut() as *mut RefCell<GuiInner> as *mut c_void,
-                start_tts_loop: Some(start_tts_loop),
-            })
-        };
-
-        let handle = ImpHandle { handle };
-
-        std::thread::spawn(move || {
-            while let Ok((mut text, num_iters, play)) = rx.recv() {
-                unsafe {
-                    imp::ResetOutput(*handle);
-                }
-                for _ in 0..num_iters {
-                    let buf = tts_looper.text_to_speech(text);
-                    if play {
-                        tts_looper.play_buf(&buf);
-                    }
-                    text = tts_looper.speech_to_text(&*buf).unwrap();
-                    unsafe {
-                        imp::PushOutput(*handle, text.as_ptr(), text.len().try_into().unwrap());
-                    }
-                }
-            }
-        });
-
-        Gui {
-            handle,
-            _inner: inner,
+impl GuiHandle {
+    pub fn push_output(&self, text: &str) {
+        let text_len = text.len().try_into().expect("usize does not fit in u64");
+        unsafe {
+            imp::PushOutput(**self.handle, text.as_ptr(), text_len);
         }
     }
 
-    pub fn exec(&mut self) {
-        unsafe { imp::Exec(*self.handle) };
+    pub fn reset_output(&self) {
+        unsafe {
+            imp::ResetOutput(**self.handle);
+        }
     }
 }
 
-impl Drop for Gui {
-    fn drop(&mut self) {
-        unsafe { imp::DestroyGui(*self.handle) };
-    }
+pub fn run(tx: Sender<GuiRequest>) -> GuiHandle {
+    let handle = unsafe {
+        imp::MakeGui(imp::GuiCallbacks {
+            start_tts_loop: Some(start_tts_loop),
+        })
+    };
+
+    let handle = Arc::new(ImpHandle { handle });
+    let thread_handle = Arc::clone(&handle);
+
+    std::thread::spawn(move || {
+        let handle = thread_handle;
+        unsafe { imp::Exec(**handle, &tx as *const Sender<GuiRequest> as *const c_void) };
+        if let Err(e) = tx.send(GuiRequest::Shutdown) {
+            warn!("Failed to send shutdown notification: {:?}", e);
+        }
+    });
+
+    GuiHandle { handle }
 }
 
-unsafe fn data_to_inner(data: *const c_void) -> RefMut<'static, GuiInner> {
-    let data = data as *const RefCell<GuiInner>;
-    (*data).borrow_mut()
+unsafe fn data_to_inner(data: *const c_void) -> &'static Sender<GuiRequest> {
+    let data = data as *const Sender<GuiRequest>;
+    &*data
 }
 
 unsafe extern "C" fn start_tts_loop(
@@ -103,9 +94,32 @@ unsafe extern "C" fn start_tts_loop(
     play: bool,
     data: *const c_void,
 ) {
-    let inner = data_to_inner(data);
-    let slice = std::slice::from_raw_parts(text, len.try_into().unwrap());
-    // FIXME: evil unwrap
-    let s = std::str::from_utf8(slice).unwrap();
-    inner.tx.send((s.to_string(), num_iters, play)).unwrap();
+    let tx = data_to_inner(data);
+    let len = match len.try_into() {
+        Ok(len) => len,
+        Err(e) => {
+            error!("Could not convert {} to usize: {}", len, e);
+            return;
+        }
+    };
+
+    let slice = std::slice::from_raw_parts(text, len);
+    let s = match std::str::from_utf8(slice) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Invalid utf8 input: {}", e);
+            return;
+        }
+    };
+
+    let res = tx.send(GuiRequest::Start {
+        text: s.to_string(),
+        num_iters,
+        play_audio: play,
+    });
+
+    if let Err(e) = res {
+        error!("Cannot start tts loop: {:?}", e);
+        return;
+    }
 }

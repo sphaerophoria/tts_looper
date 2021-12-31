@@ -1,4 +1,4 @@
-use std::ffi::CString;
+use std::ffi::{CString, NulError};
 
 pub struct FliteWav {
     wav: *mut flite_sys::cst_wave,
@@ -38,10 +38,11 @@ impl std::ops::Deref for FliteWav {
 }
 
 unsafe impl Send for FliteWav {}
+unsafe impl Sync for FliteWav {}
 
 static FLATE_INIT: std::sync::Once = std::sync::Once::new();
 
-pub fn text_to_wave<S: Into<Vec<u8>>>(text: S, sample_rate: i32) -> FliteWav {
+pub fn text_to_wave<S: Into<Vec<u8>>>(text: S, sample_rate: i32) -> Result<FliteWav, NulError> {
     FLATE_INIT.call_once(|| unsafe {
         flite_sys::flite_init();
         flite_sys::flite_set_lang_list();
@@ -50,11 +51,11 @@ pub fn text_to_wave<S: Into<Vec<u8>>>(text: S, sample_rate: i32) -> FliteWav {
 
     let wav = unsafe {
         let voice = flite_sys::flite_voice_select(std::ptr::null());
-        let text = CString::new(text).unwrap();
+        let text = CString::new(text)?;
         let wav = flite_sys::flite_text_to_wave(text.as_ptr(), voice);
         flite_sys::cst_wave_resample(wav, sample_rate);
         wav
     };
 
-    FliteWav::new(wav)
+    Ok(FliteWav::new(wav))
 }

@@ -8,3 +8,5 @@ edition = "2018"
 [dependencies]
 flite = { path = "../flite" }
 deepspeech = "0.9.0"
+rodio = "0.14"
+thiserror = "1.0.30"
