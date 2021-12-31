@@ -6,4 +6,8 @@ members = [
 	"flite",
 	"gui",
 	"tts-loop",
+	"deepspeech-sys",
 ]
+
+[patch.crates-io]
+deepspeech-sys = { path = "deepspeech-sys" }
