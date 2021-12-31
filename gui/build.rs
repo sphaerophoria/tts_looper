@@ -7,7 +7,7 @@ fn main() -> Result<(), ()>
                     .build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=static=gui");
-    println!("cargo:rustc-link-lib=static=stdc++");
+    println!("cargo:rustc-link-lib=dylib=stdc++");
     println!("cargo:rustc-link-lib=dylib=Qt5Core");
     println!("cargo:rustc-link-lib=dylib=Qt5Gui");
     println!("cargo:rustc-link-lib=dylib=Qt5Qml");

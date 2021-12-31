@@ -1,5 +1,6 @@
 use deepspeech::{Model as DsModel, errors::DeepspeechError};
 use std::path::Path;
+use std::ffi::CString;
 
 
 pub struct TtsLooper {
@@ -16,7 +17,8 @@ unsafe impl Send for TtsLooper {}
 
 impl TtsLooper {
     pub fn new() -> TtsLooper {
-        let stt_model = DsModel::load_from_files(&Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite")).unwrap();
+        let path = &Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite");
+        let stt_model = DsModel::load_from_files(&path).unwrap();
         let sample_rate = stt_model.get_sample_rate();
         TtsLooper {
             stt_model,
