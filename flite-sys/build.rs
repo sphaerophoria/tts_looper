@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use std::env;
+use std::path::PathBuf;
 
 // Subset of files to give us the ability to call flite_text_to_wave and
 // cst_wave_resample
@@ -156,7 +156,12 @@ fn main() {
 
     let mut builder = cc::Build::new();
     builder
-        .files(FILE_LIST.iter().map(|&p| vendor_path.join(p)).collect::<Vec<_>>())
+        .files(
+            FILE_LIST
+                .iter()
+                .map(|&p| vendor_path.join(p))
+                .collect::<Vec<_>>(),
+        )
         .file(manifest_dir.join("src/flite_voice_list.c"))
         .file(manifest_dir.join("src/flite_lang_list.c"))
         .include(vendor_path.join("include"))
@@ -168,19 +173,23 @@ fn main() {
         .warnings(false);
 
     if cfg!(target_os = "windows") {
-        builder
-            .define("UNDER_WINDOWS", None)
-            .define("WIN32", None);
+        builder.define("UNDER_WINDOWS", None).define("WIN32", None);
     }
 
     builder.compile("flite");
 
     let bindings = bindgen::builder()
-        .clang_arg(format!("-I{}", vendor_path.join("include").to_string_lossy()))
+        .clang_arg(format!(
+            "-I{}",
+            vendor_path.join("include").to_string_lossy()
+        ))
         .header(manifest_dir.join("bindings.h").to_string_lossy())
         .blocklist_item("_JUMP_BUFFER")
         .generate();
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    bindings.unwrap().write_to_file(format!("{}/flite.rs", out_dir)).unwrap();
+    bindings
+        .unwrap()
+        .write_to_file(format!("{}/flite.rs", out_dir))
+        .unwrap();
 }
