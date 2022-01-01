@@ -3,7 +3,6 @@ import QtQuick.Layouts 1.15
 import QtQuick 2.15
 
 ApplicationWindow {
-    //title of the application
     title: qsTr("Tts looper")
     width: 640
     height: 480
@@ -11,36 +10,59 @@ ApplicationWindow {
     minimumWidth: 640
     minimumHeight: 480
 
-    //Content Area
+    ColumnLayout {
+        anchors.fill:parent 
+        RowLayout {
+            ColumnLayout {
+                Text {
+                    text: qsTr("Tts text")
+                }
+                
+                TextField {
+                    id: inputText
+                    Layout.fillWidth: true
+                    Layout.minimumHeight: 200
+                    placeholderText: qsTr("Tts text")
+                }
+            }
 
-    GridLayout {
-        id: grid
-        columns: 4
-        anchors.fill: parent
+            GridLayout {
+                id: settings
+                columns: 2
 
-        //a button in the middle of the content area
-        TextField {
-            id: inputText
-            Layout.fillWidth: true
-            placeholderText: qsTr("Tts text")
-        }
+                Text {
+                    Layout.alignment: Qt.AlignRight
+                    text: qsTr("Number of iterations")
+                }
 
-        SpinBox {
-            id: numIters
-            value: 10
-        }
+                SpinBox {
+                    Layout.alignment: Qt.AlignLeft
+                    id: numIters
+                    value: 10
+                }
 
-        CheckBox {
-            id: play
-            text: qsTr("Play audio")
-            checkState: Qt.Unchecked
-        }
+                Text {
+                    Layout.alignment: Qt.AlignRight
+                    text: qsTr("Play audio")
+                }
 
-        Button {
-            text: qsTr("Run loop")
+                CheckBox {
+                    Layout.alignment: Qt.AlignLeft
+                    id: play
+                    checkState: Qt.Unchecked
+                }
 
-            onClicked: {
-                backend.RunLoop(inputText.text, numIters.value, play.checkState)
+                Button {
+                    Layout.alignment: Qt.AlignCenter
+                    text: qsTr("Run loop")
+
+                    Layout.columnSpan: settings.columns
+
+                    onClicked: {
+                        backend.RunLoop(inputText.text, numIters.value, play.checkState)
+                    }
+                }
+
             }
         }
 
@@ -48,7 +70,6 @@ ApplicationWindow {
             id: outputText
 
             Layout.fillHeight: true
-            Layout.columnSpan: grid.columns
 
             text: backend.output
             readOnly: true
