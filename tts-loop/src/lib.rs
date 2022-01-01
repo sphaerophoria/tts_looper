@@ -1,11 +1,10 @@
-use deepspeech::{Model as DsModel, errors::DeepspeechError};
-use std::path::Path;
+use deepspeech::{errors::DeepspeechError, Model as DsModel};
 use std::ffi::CString;
-
+use std::path::Path;
 
 pub struct TtsLooper {
     stt_model: DsModel,
-    sample_rate: i32
+    sample_rate: i32,
 }
 
 // DsModel has a pointer in it that rust doesn't know can be moved between
@@ -17,7 +16,8 @@ unsafe impl Send for TtsLooper {}
 
 impl TtsLooper {
     pub fn new() -> TtsLooper {
-        let path = &Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite");
+        let path =
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite");
         let stt_model = DsModel::load_from_files(&path).unwrap();
         let sample_rate = stt_model.get_sample_rate();
         TtsLooper {

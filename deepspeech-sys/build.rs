@@ -1,7 +1,6 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-
 fn copy_file(src: &Path, dst: &Path) {
     if dst.exists() {
         std::fs::remove_file(&dst).unwrap();
@@ -12,18 +11,24 @@ fn copy_file(src: &Path, dst: &Path) {
 
 #[cfg(target_os = "linux")]
 fn copy_lib_to_out_dir(manifest_dir: &Path, out_dir: &Path) {
-    copy_file(&manifest_dir.join("res/linux/libdeepspeech.so"), &out_dir.join("libdeepspeech.so"));
+    copy_file(
+        &manifest_dir.join("res/linux/libdeepspeech.so"),
+        &out_dir.join("libdeepspeech.so"),
+    );
 }
 
 #[cfg(target_os = "windows")]
 fn copy_lib_to_out_dir(manifest_dir: &Path, out_dir: &Path) {
-    let output_so =out_dir.join("libdeepspeech.so");
-    copy_file(&manifest_dir.join("res/windows/libdeepspeech.so"), &output_so);
+    let output_so = out_dir.join("libdeepspeech.so");
+    copy_file(
+        &manifest_dir.join("res/windows/libdeepspeech.so"),
+        &output_so,
+    );
     std::os::windows::fs::symlink_file(&output_so, out_dir.join("libdeepspeech.dll"));
 }
 
 fn main() {
-    let out_dir =env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR").unwrap();
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     println!("cargo:rustc-link-lib=dylib=deepspeech");
@@ -33,12 +38,13 @@ fn main() {
         .generate()
         .unwrap();
 
-    bindings.write_to_file(format!("{}/bindings.rs", out_dir)).unwrap();
+    bindings
+        .write_to_file(format!("{}/bindings.rs", out_dir))
+        .unwrap();
 
     // Cargo will append link search paths to LD_LIBRARY_PATH/PATH, but only if
     // they're in OUT_DIR. Copy the lib there so that cargo run works with no
     // configuration
     copy_lib_to_out_dir(&manifest_dir, &PathBuf::from(&out_dir));
     println!("cargo:rustc-link-search={}", out_dir);
-
 }
