@@ -22,7 +22,7 @@ fn copy_lib_to_out_dir(manifest_dir: &Path, out_dir: &Path) {
     // Need the .so at runtime and the .dll at link time. Rust can only use -l
     // flags to link the so, and it won't find lib*.so on windows. Unfortunately
     // at runtime we still expect to find the .so even if we linked against the
-    // renamed dll. 
+    // renamed dll.
     let output_so = out_dir.join("libdeepspeech.so");
     let output_dll = out_dir.join("libdeepspeech.dll");
     copy_file(

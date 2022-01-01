@@ -22,6 +22,8 @@ pub enum Error {
     DeepspeechError(#[from] DeepspeechError),
     #[error("Cannot play audio, audio channel invalid")]
     PlayAudio,
+    #[error("Action canceled by user")]
+    Canceled,
     #[error("Cannot convert text with a null character")]
     TtsError(NulError),
 }
@@ -44,12 +46,17 @@ impl TtsLooper {
         Ok(self.stt_model.speech_to_text(buf)?)
     }
 
-    pub fn text_to_speech(&self, s: String) -> Result<flite::FliteWav, Error> {
-        flite::text_to_wave(s, self.sample_rate).map_err(Error::TtsError)
+    pub fn text_to_speech(&self, s: String, voice: String) -> Result<flite::FliteWav, Error> {
+        flite::text_to_wave(s, self.sample_rate, voice).map_err(Error::TtsError)
     }
 
-    pub fn text_to_text(&mut self, text: String, play_audio: bool) -> Result<String, Error> {
-        let buf = self.text_to_speech(text)?;
+    pub fn text_to_text(
+        &mut self,
+        text: String,
+        play_audio: bool,
+        voice: String,
+    ) -> Result<String, Error> {
+        let buf = self.text_to_speech(text, voice)?;
         let buf = Arc::new(buf);
         if play_audio {
             self.audio_tx
@@ -64,10 +71,16 @@ impl TtsLooper {
         mut text: String,
         play_audio: bool,
         num_iters: i32,
+        voice: String,
+        cancel_rx: &Receiver<()>,
         status_fn: F,
     ) -> Result<(), Error> {
         for _ in 0..num_iters {
-            text = self.text_to_text(text, play_audio)?;
+            if cancel_rx.try_recv().is_ok() {
+                return Err(Error::Canceled);
+            }
+
+            text = self.text_to_text(text, play_audio, voice.clone())?;
             status_fn(&text);
         }
         Ok(())

@@ -3,6 +3,7 @@ use std::convert::TryInto;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use thiserror::Error;
 
 mod imp {
     #![allow(non_snake_case)]
@@ -17,6 +18,7 @@ pub enum GuiRequest {
         text: String,
         num_iters: i32,
         play_audio: bool,
+        voice: String,
     },
     Shutdown,
 }
@@ -48,24 +50,81 @@ pub struct GuiHandle {
 
 impl GuiHandle {
     pub fn push_output(&self, text: &str) {
-        let text_len = text.len().try_into().expect("usize does not fit in u64");
         unsafe {
-            imp::PushOutput(**self.handle, text.as_ptr(), text_len);
+            imp::PushOutput(**self.handle, to_gui_string(text));
         }
     }
 
-    pub fn reset_output(&self) {
+    pub fn push_loop_start(&self, text: &str, voice: &str, num_iters: i32) {
         unsafe {
-            imp::ResetOutput(**self.handle);
+            imp::PushLoopStart(
+                **self.handle,
+                to_gui_string(text),
+                to_gui_string(voice),
+                num_iters,
+            );
+        }
+    }
+
+    pub fn push_error(&self, error: &str) {
+        unsafe {
+            imp::PushError(**self.handle, to_gui_string(error));
         }
     }
 }
 
-pub fn run(tx: Sender<GuiRequest>) -> GuiHandle {
+fn to_gui_string(s: &str) -> imp::String {
+    let text_len = s.len().try_into().expect("usize does not fit in u64");
+    imp::String {
+        data: s.as_ptr(),
+        len: text_len,
+    }
+}
+
+#[derive(Error, Debug)]
+enum GuiStringParseError {
+    #[error("Invalid string length")]
+    InvalidLen,
+    #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+}
+
+fn parse_gui_string(s: &imp::String) -> Result<&str, GuiStringParseError> {
+    unsafe {
+        let len = s
+            .len
+            .try_into()
+            .map_err(|_| GuiStringParseError::InvalidLen)?;
+        let slice = std::slice::from_raw_parts(s.data, len);
+        std::str::from_utf8(slice).map_err(GuiStringParseError::Utf8Error)
+    }
+}
+
+struct GuiData {
+    handle: Arc<ImpHandle>,
+    tx: Sender<GuiRequest>,
+    cancel_tx: Sender<()>,
+}
+
+pub fn run(tx: Sender<GuiRequest>, cancel_tx: Sender<()>, voices: &[&str]) -> GuiHandle {
+    println!("{:?}", voices);
+    let gui_voices = voices
+        .into_iter()
+        .map(|s| to_gui_string(*s))
+        .collect::<Vec<_>>();
+
     let handle = unsafe {
-        imp::MakeGui(imp::GuiCallbacks {
-            start_tts_loop: Some(start_tts_loop),
-        })
+        imp::MakeGui(
+            imp::GuiCallbacks {
+                start_tts_loop: Some(start_tts_loop),
+                cancel: Some(cancel),
+            },
+            gui_voices.as_ptr(),
+            gui_voices
+                .len()
+                .try_into()
+                .expect("usize does not fit in u64"),
+        )
     };
 
     let handle = Arc::new(ImpHandle { handle });
@@ -73,8 +132,18 @@ pub fn run(tx: Sender<GuiRequest>) -> GuiHandle {
 
     std::thread::spawn(move || {
         let handle = thread_handle;
-        unsafe { imp::Exec(**handle, &tx as *const Sender<GuiRequest> as *const c_void) };
-        if let Err(e) = tx.send(GuiRequest::Shutdown) {
+        let gui_data = GuiData {
+            handle,
+            tx,
+            cancel_tx,
+        };
+        unsafe {
+            imp::Exec(
+                **gui_data.handle,
+                &gui_data as *const GuiData as *const c_void,
+            )
+        };
+        if let Err(e) = gui_data.tx.send(GuiRequest::Shutdown) {
             warn!("Failed to send shutdown notification: {:?}", e);
         }
     });
@@ -82,44 +151,63 @@ pub fn run(tx: Sender<GuiRequest>) -> GuiHandle {
     GuiHandle { handle }
 }
 
-unsafe fn data_to_inner(data: *const c_void) -> &'static Sender<GuiRequest> {
-    let data = data as *const Sender<GuiRequest>;
+unsafe fn data_to_inner(data: *const c_void) -> &'static GuiData {
+    let data = data as *const GuiData;
     &*data
 }
 
 unsafe extern "C" fn start_tts_loop(
-    text: *const u8,
-    len: u64,
+    text: imp::String,
     num_iters: i32,
     play: bool,
+    voice: imp::String,
     data: *const c_void,
 ) {
-    let tx = data_to_inner(data);
-    let len = match len.try_into() {
-        Ok(len) => len,
-        Err(e) => {
-            error!("Could not convert {} to usize: {}", len, e);
-            return;
-        }
-    };
+    let data = data_to_inner(data);
 
-    let slice = std::slice::from_raw_parts(text, len);
-    let s = match std::str::from_utf8(slice) {
+    let text = match parse_gui_string(&text) {
         Ok(s) => s,
         Err(e) => {
-            error!("Invalid utf8 input: {}", e);
+            let err = format!("Invalid gui string: {}", e);
+            error!("{}", err);
+            imp::PushError(**data.handle, to_gui_string(&err));
             return;
         }
     };
 
-    let res = tx.send(GuiRequest::Start {
-        text: s.to_string(),
+    let voice = match parse_gui_string(&voice) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = format!("Invalid gui string: {}", e);
+            error!("{}", err);
+            imp::PushError(**data.handle, to_gui_string(&err));
+            return;
+        }
+    };
+
+    let res = data.tx.send(GuiRequest::Start {
+        text: text.to_string(),
         num_iters,
         play_audio: play,
+        voice: voice.to_string(),
     });
 
     if let Err(e) = res {
-        error!("Cannot start tts loop: {:?}", e);
+        let err = format!("Cannot start tts loop: {:?}", e);
+        error!("{}", err);
+        imp::PushError(**data.handle, to_gui_string(&err));
+        return;
+    }
+}
+
+unsafe extern "C" fn cancel(data: *const c_void) {
+    let data = data_to_inner(data);
+
+    let res = data.cancel_tx.send(());
+    if let Err(e) = res {
+        let err = format!("Failed to cancel tts loop: {}", e);
+        error!("{}", err);
+        imp::PushError(**data.handle, to_gui_string(&err));
         return;
     }
 }

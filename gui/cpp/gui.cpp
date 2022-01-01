@@ -1,111 +1,159 @@
+#include "gui.h"
+#include <QGuiApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
-#include <QGuiApplication>
 #include <QQmlContext>
+#include <QStringListModel>
 #include <QThread>
 
-#include "gui.h"
-
-class Backend : public QObject
-{
-    Q_OBJECT
-
-    Q_PROPERTY(QString output MEMBER output_ NOTIFY OutputChanged)
-
-public:
-    Backend(GuiCallbacks callbacks, const void* data)
-        : callbacks_(callbacks)
-        , data_(data)
-    {}
-
-public slots:
-    void PushOutput(const QString& text) {
-        if (QThread::currentThread() != thread()) {
-            QMetaObject::invokeMethod(this, [this, text] {
-                PushOutput(text);
-            });
-            return;
-        }
-        if (!output_.isEmpty()) {
-            output_.push_back('\n');
-        }
-
-        output_.push_back(text);
-        emit OutputChanged();
-    }
-
-    void ResetOutput() {
-        if (QThread::currentThread() != thread()) {
-            QMetaObject::invokeMethod(this, [this] {
-                ResetOutput();
-            });
-            return;
-        }
-        output_.clear();
-    }
-
-public slots:
-    void RunLoop(const QString& text, int num_iters, bool play) {
-        auto byte_arr = text.toUtf8();
-        callbacks_.start_tts_loop(
-            reinterpret_cast<const uint8_t *>(byte_arr.data()), byte_arr.size(),
-            num_iters, play, data_);
-    }
-
-signals:
-    void OutputChanged();
-
-private:
-    GuiCallbacks callbacks_;
-    const void* data_;
-    QString output_;
-};
-
-struct Gui
-{
-    GuiCallbacks callbacks;
-    Backend* backend = nullptr;
-
-    Gui(GuiCallbacks callbacks)
-        : callbacks(callbacks)
-    {}
-};
-
-Gui* MakeGui(GuiCallbacks callbacks) {
-    return new Gui(callbacks);
+namespace {
+QString GuiStringToQString(const String& s) {
+  return QString::fromUtf8(reinterpret_cast<const char*>(s.data), s.len);
 }
 
-void DestroyGui(Gui* gui) {
-    delete gui;
+struct GuiStringData {
+  QByteArray data;
+  String s;
+};
+
+GuiStringData QStringToGuiString(const QString& s) {
+  GuiStringData ret;
+  ret.data = s.toUtf8();
+  ret.s.data = reinterpret_cast<const uint8_t*>(ret.data.data());
+  ret.s.len = ret.data.size();
+  return ret;
 }
+}  // namespace
+
+class Backend : public QObject {
+  Q_OBJECT
+
+  Q_PROPERTY(QStringListModel* output READ Output NOTIFY OutputChanged)
+  Q_PROPERTY(QStringList voices MEMBER voices_ NOTIFY VoicesChanged)
+
+ public:
+  Backend(GuiCallbacks callbacks, QStringList voices, const void* data)
+      : callbacks_(callbacks), voices_(std::move(voices)), data_(data) {}
+
+ public slots:
+  void PushOutput(const QString& text) {
+    if (QThread::currentThread() != thread()) {
+      QMetaObject::invokeMethod(this, [=] { PushOutput(text); });
+      return;
+    }
+
+    PushOutputRaw(text.toHtmlEscaped());
+  }
+
+  void PushLoopStart(const QString& text, const QString& voice,
+                     int32_t numIters) {
+    if (QThread::currentThread() != thread()) {
+      QMetaObject::invokeMethod(this,
+                                [=] { PushLoopStart(text, voice, numIters); });
+      return;
+    }
+
+    auto output = tr("<b>Starting loop. Voice: %1, Iterations: %2<br>"
+                     "%3</b>")
+                      .arg(voice.toHtmlEscaped())
+                      .arg(numIters)
+                      .arg(text.toHtmlEscaped());
+
+    PushOutputRaw(output);
+  }
+
+  void PushError(const QString& error) {
+    if (QThread::currentThread() != thread()) {
+      QMetaObject::invokeMethod(this, [=] { PushError(error); });
+      return;
+    }
+
+    auto output =
+        tr("<b><span style=\"color:red\">Error: %1</span></b>").arg(error);
+    PushOutputRaw(output);
+  }
+
+ public slots:
+  void RunLoop(const QString& text, int num_iters, bool play,
+               const QString& voice) {
+    callbacks_.start_tts_loop(QStringToGuiString(text).s, num_iters, play,
+                              QStringToGuiString(voice).s, data_);
+  }
+
+  void Cancel() { callbacks_.cancel(data_); }
+
+  QStringListModel* Output() { return &output_; }
+
+ signals:
+  void OutputChanged();
+  void VoicesChanged();
+
+ private:
+  void PushOutputRaw(const QString& text) {
+    output_.insertRow(0);
+    auto index = output_.index(0, 0);
+    output_.setData(index, text);
+  }
+  GuiCallbacks callbacks_;
+  QStringList voices_;
+  const void* data_;
+  QStringListModel output_;
+};
+
+struct Gui {
+  GuiCallbacks callbacks;
+  QStringList voices;
+  Backend* backend = nullptr;
+
+  Gui(GuiCallbacks callbacks, QStringList voices)
+      : callbacks(callbacks), voices(std::move(voices)) {}
+};
+
+Gui* MakeGui(GuiCallbacks callbacks, const String* voices,
+             uint64_t num_voices) {
+  QStringList q_voices;
+  for (uint64_t i = 0; i < num_voices; ++i) {
+    q_voices.push_back(GuiStringToQString(voices[i]));
+  }
+  return new Gui(callbacks, q_voices);
+}
+
+void DestroyGui(Gui* gui) { delete gui; }
 
 void Exec(Gui* gui, const void* data) {
-    Q_INIT_RESOURCE(res);
-    int argc = 0;
-    QGuiApplication app(argc, nullptr);
+  Q_INIT_RESOURCE(res);
+  int argc = 0;
+  QGuiApplication app(argc, nullptr);
 
-    Backend backend(gui->callbacks, data);
-    gui->backend = &backend;
+  Backend backend(gui->callbacks, gui->voices, data);
+  gui->backend = &backend;
 
-    QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty("backend", gui->backend);
-    engine.load(QUrl("qrc:/Main.qml"));
+  QQmlApplicationEngine engine;
+  engine.rootContext()->setContextProperty("backend", gui->backend);
+  engine.load(QUrl("qrc:/Main.qml"));
 
-    app.exec();
+  QGuiApplication::exec();
 
-    gui->backend = nullptr;
+  gui->backend = nullptr;
 }
 
-void PushOutput(Gui* gui, const uint8_t* text, uint64_t text_len) {
-    if (gui->backend) {
-        gui->backend->PushOutput(QString::fromUtf8(reinterpret_cast<const char*>(text), text_len));
-    }
+void PushLoopStart(Gui* gui, String text, String voice, int32_t num_iters) {
+  if (gui->backend) {
+    gui->backend->PushLoopStart(GuiStringToQString(text),
+                                GuiStringToQString(voice), num_iters);
+  }
 }
 
-void ResetOutput(Gui* gui) {
-    if (gui->backend) {
-        gui->backend->ResetOutput();
-    }
+void PushOutput(Gui* gui, String text) {
+  if (gui->backend) {
+    gui->backend->PushOutput(GuiStringToQString(text));
+  }
+}
+
+void PushError(Gui* gui, String error) {
+  if (gui->backend) {
+    gui->backend->PushError(GuiStringToQString(error));
+  }
 }
 
 #include "gui.moc"

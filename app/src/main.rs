@@ -6,9 +6,10 @@ fn main() {
 
     let (play_tx, play_rx) = mpsc::channel();
     let (req_tx, req_rx) = mpsc::channel();
+    let (cancel_tx, cancel_rx) = mpsc::channel();
 
     let mut looper = tts_loop::TtsLooper::new(play_tx).expect("Failed to construct tts looper");
-    let gui = gui::run(req_tx);
+    let gui = gui::run(req_tx, cancel_tx, &flite::list_voices());
 
     std::thread::spawn(move || {
         let mut audio =
@@ -26,12 +27,18 @@ fn main() {
                 text,
                 num_iters,
                 play_audio,
+                voice,
             } => {
-                gui.reset_output();
+                while cancel_rx.try_recv().is_ok() {}
+
+                gui.push_loop_start(&text, &voice, num_iters);
                 let res =
-                    looper.text_to_text_loop(text, play_audio, num_iters, |s| gui.push_output(s));
+                    looper.text_to_text_loop(text, play_audio, num_iters, voice, &cancel_rx, |s| {
+                        gui.push_output(s)
+                    });
                 if let Err(e) = res {
                     error!("{}", e);
+                    gui.push_error(&e.to_string());
                 }
             }
             gui::GuiRequest::Shutdown => break,
