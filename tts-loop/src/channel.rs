@@ -1,66 +1,114 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 
-pub enum Item<T> {
-    Some(T),
+#[derive(Debug)]
+pub enum Request {
+    SetText { text: String },
+    LogStart { num_iters: i32 },
+    RunTts,
+    PlayAudio,
+    RunStt,
+    SetVoice { voice: String },
+    EnableAudio { enable: bool },
     Cancel,
+    Shutdown,
 }
 
-struct Inner<T> {
-    queue: Mutex<VecDeque<Item<T>>>,
+impl Request {
+    fn is_priority_action(&self) -> bool {
+        // Priority actions will always happen before non-priority actions. Priority actions cannot be canceled
+        match *self {
+            Request::SetText { .. }
+            | Request::LogStart { .. }
+            | Request::RunTts
+            | Request::RunStt
+            | Request::PlayAudio => false,
+            Request::SetVoice { .. }
+            | Request::Cancel
+            | Request::EnableAudio { .. }
+            | Request::Shutdown => true,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Queues {
+    priority: VecDeque<Request>,
+    regular: VecDeque<Request>,
+}
+
+struct Inner {
+    queues: Mutex<Queues>,
     cond: Condvar,
 }
 
-pub struct Sender<T> {
-    inner: Arc<Inner<T>>,
+pub struct Sender {
+    inner: Arc<Inner>,
 }
 
-impl<T> Sender<T> {
-    pub fn send(&self, val: T) {
-        let mut queue = self.inner.queue.lock().expect("Poisoned lock");
-        queue.push_back(Item::Some(val));
+impl Sender {
+    pub fn send(&self, val: Request) {
+        let mut queues = self.inner.queues.lock().expect("Poisoned lock");
+        if let Request::Cancel = val {
+            // Push cancel to both queues. In priority it's used to indicate
+            // that we need to execute a cancel, in the regular queue it tells
+            // us when to stop
+            queues.regular.push_back(Request::Cancel);
+            queues.priority.push_back(Request::Cancel);
+        } else if val.is_priority_action() {
+            queues.priority.push_back(val);
+        } else {
+            queues.regular.push_back(val);
+        }
         self.inner.cond.notify_one();
     }
-
-    pub fn cancel(&self) {
-        let mut queue = self.inner.queue.lock().expect("Poisoned lock");
-        queue.clear();
-        queue.push_back(Item::Cancel);
-        self.inner.cond.notify_one();
-    }
 }
 
-pub struct Receiver<T> {
-    inner: Arc<Inner<T>>,
+pub struct Receiver {
+    inner: Arc<Inner>,
 }
 
-impl<T> Receiver<T> {
-    pub fn recv(&self) -> Item<T> {
-        let mut queue = self.inner.queue.lock().expect("Poisoned lock");
+impl Receiver {
+    pub fn recv(&self) -> Request {
+        let mut queues = self.inner.queues.lock().expect("Poisoned lock");
         loop {
-            if let Some(val) = queue.pop_front() {
+            if let Some(val) = queues.priority.pop_front() {
+                return val;
+            } else if let Some(val) = queues.regular.pop_front() {
                 return val;
             }
 
-            queue = self.inner.cond.wait(queue).expect("Poisoned lock");
+            queues = self.inner.cond.wait(queues).expect("Poisoned lock");
         }
     }
 
-    pub fn peek_cancel(&self) -> bool {
-        let queue = self.inner.queue.lock().expect("Poisoned lock");
-        if let Some(Item::Cancel) = queue.front() {
-            return true;
+    pub fn execute_cancel(&self) -> bool {
+        let mut queues = self.inner.queues.lock().expect("Poisoned lock");
+
+        let mut any_removed = false;
+
+        while let Some(val) = queues.regular.pop_front() {
+            if let Request::Cancel = val {
+                break;
+            } else {
+                any_removed = true
+            }
         }
 
-        false
+        any_removed
     }
 }
 
-pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
-    let queue = Mutex::new(VecDeque::new());
+pub fn channel() -> (Sender, Receiver) {
+    let queues = Queues {
+        priority: VecDeque::new(),
+        regular: VecDeque::new(),
+    };
+    let queues = Mutex::new(queues);
+
     let cond = Condvar::new();
 
-    let inner = Inner { queue, cond };
+    let inner = Inner { queues, cond };
     let inner = Arc::new(inner);
 
     let tx = Sender {

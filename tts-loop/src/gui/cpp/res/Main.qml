@@ -63,6 +63,10 @@ ApplicationWindow {
                         Layout.leftMargin: 0
                         id: play
                         checkState: Qt.Unchecked
+
+                        onCheckStateChanged: {
+                            backend.EnableAudio(checkState)
+                        }
                     }
 
                     Text {
@@ -74,6 +78,10 @@ ApplicationWindow {
                         Layout.alignment: Qt.AlignLeft
                         id: selectedVoice
                         model: backend.voices
+
+                        onCurrentIndexChanged: {
+                            backend.SetVoice(currentIndex)
+                        }
                     }
 
                     Button {
@@ -81,7 +89,7 @@ ApplicationWindow {
                         text: qsTr("Run loop")
 
                         onClicked: {
-                            backend.RunLoop(inputText.text, numIters.value, play.checkState, backend.voices[selectedVoice.currentIndex])
+                            backend.RunLoop(inputText.text, numIters.value)
                         }
                     }
 

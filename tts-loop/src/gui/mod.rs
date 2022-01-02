@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use thiserror::Error;
 
-use tts_loop::channel::Sender;
+use crate::channel::{Request, Sender};
 
 mod imp {
     #![allow(non_snake_case)]
@@ -12,16 +12,6 @@ mod imp {
     #![allow(unused)]
     #![allow(non_camel_case_types)]
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
-
-pub enum GuiRequest {
-    Start {
-        text: String,
-        num_iters: i32,
-        play_audio: bool,
-        voice: String,
-    },
-    Shutdown,
 }
 
 struct ImpHandle {
@@ -72,6 +62,12 @@ impl GuiHandle {
             imp::PushError(**self.handle, to_gui_string(error));
         }
     }
+
+    pub fn push_cancel(&self) {
+        unsafe {
+            imp::PushCancel(**self.handle);
+        }
+    }
 }
 
 fn to_gui_string(s: &str) -> imp::String {
@@ -103,19 +99,18 @@ fn parse_gui_string(s: &imp::String) -> Result<&str, GuiStringParseError> {
 
 struct GuiData {
     handle: Arc<ImpHandle>,
-    tx: Sender<GuiRequest>,
+    tx: Sender,
 }
 
-pub fn run(tx: Sender<GuiRequest>, voices: &[&str]) -> GuiHandle {
-    let gui_voices = voices
-        .iter()
-        .map(|s| to_gui_string(*s))
-        .collect::<Vec<_>>();
+pub fn run(tx: Sender, voices: &[&str]) -> GuiHandle {
+    let gui_voices = voices.iter().map(|s| to_gui_string(*s)).collect::<Vec<_>>();
 
     let handle = unsafe {
         imp::MakeGui(
             imp::GuiCallbacks {
                 start_tts_loop: Some(start_tts_loop),
+                set_voice: Some(set_voice),
+                enable_audio: Some(enable_audio),
                 cancel: Some(cancel),
             },
             gui_voices.as_ptr(),
@@ -138,7 +133,7 @@ pub fn run(tx: Sender<GuiRequest>, voices: &[&str]) -> GuiHandle {
                 &gui_data as *const GuiData as *const c_void,
             )
         };
-        gui_data.tx.send(GuiRequest::Shutdown);
+        gui_data.tx.send(Request::Shutdown);
     });
 
     GuiHandle { handle }
@@ -149,13 +144,7 @@ unsafe fn data_to_inner(data: *const c_void) -> &'static GuiData {
     &*data
 }
 
-unsafe extern "C" fn start_tts_loop(
-    text: imp::String,
-    num_iters: i32,
-    play: bool,
-    voice: imp::String,
-    data: *const c_void,
-) {
+unsafe extern "C" fn start_tts_loop(text: imp::String, num_iters: i32, data: *const c_void) {
     let data = data_to_inner(data);
 
     let text = match parse_gui_string(&text) {
@@ -168,6 +157,25 @@ unsafe extern "C" fn start_tts_loop(
         }
     };
 
+    data.tx.send(Request::Cancel);
+    data.tx.send(Request::SetText {
+        text: text.to_string(),
+    });
+    data.tx.send(Request::LogStart { num_iters });
+    for _ in 0..num_iters {
+        data.tx.send(Request::RunTts);
+        data.tx.send(Request::PlayAudio);
+        data.tx.send(Request::RunStt);
+    }
+}
+
+unsafe extern "C" fn cancel(data: *const c_void) {
+    let data = data_to_inner(data);
+    data.tx.send(Request::Cancel);
+}
+
+unsafe extern "C" fn set_voice(voice: imp::String, data: *const c_void) {
+    let data = data_to_inner(data);
     let voice = match parse_gui_string(&voice) {
         Ok(s) => s,
         Err(e) => {
@@ -177,16 +185,12 @@ unsafe extern "C" fn start_tts_loop(
             return;
         }
     };
-
-    data.tx.send(GuiRequest::Start {
-        text: text.to_string(),
-        num_iters,
-        play_audio: play,
+    data.tx.send(Request::SetVoice {
         voice: voice.to_string(),
     });
 }
 
-unsafe extern "C" fn cancel(data: *const c_void) {
+unsafe extern "C" fn enable_audio(enable: bool, data: *const c_void) {
     let data = data_to_inner(data);
-    data.tx.cancel();
+    data.tx.send(Request::EnableAudio { enable });
 }

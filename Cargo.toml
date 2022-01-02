@@ -1,10 +1,8 @@
 [workspace]
 
 members = [
-	"app",
 	"flite-sys",
 	"flite",
-	"gui",
 	"tts-loop",
 	"deepspeech-sys",
 ]

@@ -14,8 +14,9 @@ typedef struct String {
 } String;
 
 typedef struct GuiCallbacks {
-  void (*start_tts_loop)(String text, int32_t num_iters, bool play,
-                         String voice, const void* data);
+  void (*start_tts_loop)(String text, int32_t num_iters, const void* data);
+  void (*set_voice)(String voice, const void* data);
+  void (*enable_audio)(bool enable, const void* data);
   void (*cancel)(const void* data);
 } GuiCallbacks;
 
@@ -25,6 +26,7 @@ void DestroyGui(Gui* gui);
 void PushLoopStart(Gui* gui, String text, String voice, int32_t num_iters);
 void PushOutput(Gui* gui, String text);
 void PushError(Gui* gui, String error);
+void PushCancel(Gui* gui);
 
 void Exec(Gui* gui, const void* data);
 

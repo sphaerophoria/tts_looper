@@ -377,17 +377,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
-name = "gui"
-version = "0.1.0"
-dependencies = [
- "bindgen 0.59.2",
- "cmake",
- "log",
- "thiserror",
- "tts-loop",
-]
-
-[[package]]
 name = "hermit-abi"
 version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1012,24 +1001,14 @@ dependencies = [
 name = "tts-loop"
 version = "0.1.0"
 dependencies = [
- "deepspeech",
- "flite",
- "rodio",
- "thiserror",
-]
-
-[[package]]
-name = "tts-loop-app"
-version = "0.1.0"
-dependencies = [
+ "bindgen 0.59.2",
+ "cmake",
  "deepspeech",
  "env_logger",
  "flite",
- "gui",
- "hound",
  "log",
  "rodio",
- "tts-loop",
+ "thiserror",
 ]
 
 [[package]]

@@ -73,11 +73,28 @@ class Backend : public QObject {
     PushOutputRaw(output);
   }
 
+  void PushCancel() {
+    if (QThread::currentThread() != thread()) {
+      QMetaObject::invokeMethod(this, [this] { PushCancel(); });
+      return;
+    }
+
+    auto output =
+        tr("<b><span style=\"color:red\">Canceled</span></b>");
+    PushOutputRaw(output);
+  }
+
  public slots:
-  void RunLoop(const QString& text, int num_iters, bool play,
-               const QString& voice) {
-    callbacks_.start_tts_loop(QStringToGuiString(text).s, num_iters, play,
-                              QStringToGuiString(voice).s, data_);
+  void RunLoop(const QString& text, int num_iters) {
+    callbacks_.start_tts_loop(QStringToGuiString(text).s, num_iters, data_);
+  }
+
+  void SetVoice(int voice_idx) {
+    callbacks_.set_voice(QStringToGuiString(voices_[voice_idx]).s, data_);
+  }
+
+  void EnableAudio(bool enable) {
+    callbacks_.enable_audio(enable, data_);
   }
 
   void Cancel() { callbacks_.cancel(data_); }
@@ -153,6 +170,12 @@ void PushOutput(Gui* gui, String text) {
 void PushError(Gui* gui, String error) {
   if (gui->backend) {
     gui->backend->PushError(GuiStringToQString(error));
+  }
+}
+
+void PushCancel(Gui* gui) {
+  if (gui->backend) {
+    gui->backend->PushCancel();
   }
 }
 
