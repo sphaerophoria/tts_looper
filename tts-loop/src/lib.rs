@@ -4,22 +4,22 @@ use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::convert::TryInto;
 use std::ffi::NulError;
 use std::path::Path;
-use std::sync::{
-    mpsc::{Receiver, Sender},
-    Arc,
-};
 use thiserror::Error as ThisError;
+
+pub mod channel;
 
 pub struct TtsLooper {
     stt_model: DsModel,
     sample_rate: i32,
-    audio_tx: Sender<Arc<FliteWav>>,
+    audio: AudioPlayback,
 }
 
 #[derive(ThisError, Debug)]
 pub enum Error {
     #[error(transparent)]
     DeepspeechError(#[from] DeepspeechError),
+    #[error(transparent)]
+    Audio(#[from] AudioError),
     #[error("Cannot play audio, audio channel invalid")]
     PlayAudio,
     #[error("Action canceled by user")]
@@ -29,15 +29,16 @@ pub enum Error {
 }
 
 impl TtsLooper {
-    pub fn new(audio_tx: Sender<Arc<FliteWav>>) -> Result<TtsLooper, Error> {
+    pub fn new() -> Result<TtsLooper, Error> {
         let path =
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite");
         let stt_model = DsModel::load_from_files(&path)?;
         let sample_rate = stt_model.get_sample_rate();
+        let audio = AudioPlayback::new()?;
         Ok(TtsLooper {
             stt_model,
             sample_rate,
-            audio_tx,
+            audio,
         })
     }
 
@@ -57,26 +58,23 @@ impl TtsLooper {
         voice: String,
     ) -> Result<String, Error> {
         let buf = self.text_to_speech(text, voice)?;
-        let buf = Arc::new(buf);
         if play_audio {
-            self.audio_tx
-                .send(Arc::clone(&buf))
-                .map_err(|_| Error::PlayAudio)?;
+            self.audio.play_wav(&buf)?;
         }
-        self.speech_to_text(&**buf)
+        self.speech_to_text(&*buf)
     }
 
-    pub fn text_to_text_loop<F: Fn(&str)>(
+    pub fn text_to_text_loop<F: Fn(&str), C: Fn() -> bool>(
         &mut self,
         mut text: String,
         play_audio: bool,
         num_iters: i32,
         voice: String,
-        cancel_rx: &Receiver<()>,
+        cancel_fn: C,
         status_fn: F,
     ) -> Result<(), Error> {
         for _ in 0..num_iters {
-            if cancel_rx.try_recv().is_ok() {
+            if cancel_fn() {
                 return Err(Error::Canceled);
             }
 
@@ -98,13 +96,12 @@ pub enum AudioError {
 }
 
 pub struct AudioPlayback {
-    rx: Receiver<Arc<FliteWav>>,
     _stream: OutputStream,
     sink: Sink,
 }
 
 impl AudioPlayback {
-    pub fn new(rx: Receiver<Arc<FliteWav>>) -> Result<AudioPlayback, AudioError> {
+    pub fn new() -> Result<AudioPlayback, AudioError> {
         let (_stream, stream_handle) =
             OutputStream::try_default().map_err(|e| AudioError::OutputOpenError(e.to_string()))?;
         let sink = Sink::try_new(&stream_handle)
@@ -112,24 +109,23 @@ impl AudioPlayback {
 
         sink.play();
 
-        Ok(AudioPlayback { rx, _stream, sink })
+        Ok(AudioPlayback { _stream, sink })
     }
 
-    pub fn exec(&mut self) -> Result<(), AudioError> {
-        while let Ok(wav) = self.rx.recv() {
-            let num_channels = wav.num_channels();
-            let num_channels = num_channels
-                .try_into()
-                .map_err(|_| AudioError::NumChannelsError(num_channels))?;
+    pub fn play_wav(&mut self, wav: &FliteWav) -> Result<(), AudioError> {
+        let num_channels = wav.num_channels();
+        let num_channels = num_channels
+            .try_into()
+            .map_err(|_| AudioError::NumChannelsError(num_channels))?;
 
-            let sample_rate = wav.sample_rate();
-            let sample_rate = sample_rate
-                .try_into()
-                .map_err(|_| AudioError::SampleRateError(sample_rate))?;
+        let sample_rate = wav.sample_rate();
+        let sample_rate = sample_rate
+            .try_into()
+            .map_err(|_| AudioError::SampleRateError(sample_rate))?;
 
-            let samples = SamplesBuffer::new(num_channels, sample_rate, (*wav).to_vec());
-            self.sink.append(samples);
-        }
+        let samples = SamplesBuffer::new(num_channels, sample_rate, (*wav).to_vec());
+        self.sink.append(samples);
+        self.sink.sleep_until_end();
 
         Ok(())
     }

@@ -1,9 +1,10 @@
-use log::{error, warn};
+use log::error;
 use std::convert::TryInto;
 use std::ffi::c_void;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use thiserror::Error;
+
+use tts_loop::channel::Sender;
 
 mod imp {
     #![allow(non_snake_case)]
@@ -103,13 +104,11 @@ fn parse_gui_string(s: &imp::String) -> Result<&str, GuiStringParseError> {
 struct GuiData {
     handle: Arc<ImpHandle>,
     tx: Sender<GuiRequest>,
-    cancel_tx: Sender<()>,
 }
 
-pub fn run(tx: Sender<GuiRequest>, cancel_tx: Sender<()>, voices: &[&str]) -> GuiHandle {
-    println!("{:?}", voices);
+pub fn run(tx: Sender<GuiRequest>, voices: &[&str]) -> GuiHandle {
     let gui_voices = voices
-        .into_iter()
+        .iter()
         .map(|s| to_gui_string(*s))
         .collect::<Vec<_>>();
 
@@ -132,20 +131,14 @@ pub fn run(tx: Sender<GuiRequest>, cancel_tx: Sender<()>, voices: &[&str]) -> Gu
 
     std::thread::spawn(move || {
         let handle = thread_handle;
-        let gui_data = GuiData {
-            handle,
-            tx,
-            cancel_tx,
-        };
+        let gui_data = GuiData { handle, tx };
         unsafe {
             imp::Exec(
                 **gui_data.handle,
                 &gui_data as *const GuiData as *const c_void,
             )
         };
-        if let Err(e) = gui_data.tx.send(GuiRequest::Shutdown) {
-            warn!("Failed to send shutdown notification: {:?}", e);
-        }
+        gui_data.tx.send(GuiRequest::Shutdown);
     });
 
     GuiHandle { handle }
@@ -185,29 +178,15 @@ unsafe extern "C" fn start_tts_loop(
         }
     };
 
-    let res = data.tx.send(GuiRequest::Start {
+    data.tx.send(GuiRequest::Start {
         text: text.to_string(),
         num_iters,
         play_audio: play,
         voice: voice.to_string(),
     });
-
-    if let Err(e) = res {
-        let err = format!("Cannot start tts loop: {:?}", e);
-        error!("{}", err);
-        imp::PushError(**data.handle, to_gui_string(&err));
-        return;
-    }
 }
 
 unsafe extern "C" fn cancel(data: *const c_void) {
     let data = data_to_inner(data);
-
-    let res = data.cancel_tx.send(());
-    if let Err(e) = res {
-        let err = format!("Failed to cancel tts loop: {}", e);
-        error!("{}", err);
-        imp::PushError(**data.handle, to_gui_string(&err));
-        return;
-    }
+    data.tx.cancel();
 }
