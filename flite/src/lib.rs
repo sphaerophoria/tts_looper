@@ -1,4 +1,4 @@
-use std::ffi::{CString, NulError};
+use std::ffi::{CStr, CString, NulError};
 
 pub struct FliteWav {
     wav: *mut flite_sys::cst_wave,
@@ -42,15 +42,38 @@ unsafe impl Sync for FliteWav {}
 
 static FLATE_INIT: std::sync::Once = std::sync::Once::new();
 
-pub fn text_to_wave<S: Into<Vec<u8>>>(text: S, sample_rate: i32) -> Result<FliteWav, NulError> {
-    FLATE_INIT.call_once(|| unsafe {
+fn flite_init() {
+    unsafe {
         flite_sys::flite_init();
         flite_sys::flite_set_lang_list();
         flite_sys::flite_set_voice_list(std::ptr::null());
-    });
+    }
+}
+
+pub fn list_voices() -> Vec<&'static str> {
+    FLATE_INIT.call_once(flite_init);
+
+    unsafe {
+        let mut it = flite_sys::flite_voice_list as *const flite_sys::cst_val;
+        let mut ret = Vec::new();
+
+        while it != std::ptr::null() {
+            let voice = flite_sys::val_voice(flite_sys::val_car(it));
+            let name =CStr::from_ptr((*voice).name);
+            ret.push(name.to_str().expect("Invalid voice name"));
+            it = flite_sys::val_cdr(it);
+        }
+
+        ret
+    }
+}
+
+pub fn text_to_wave<S: Into<Vec<u8>>>(text: S, sample_rate: i32, voice: String) -> Result<FliteWav, NulError> {
+    FLATE_INIT.call_once(flite_init);
 
     let wav = unsafe {
-        let voice = flite_sys::flite_voice_select(std::ptr::null());
+        let voice = CString::new(voice)?;
+        let voice = flite_sys::flite_voice_select(voice.as_ptr());
         let text = CString::new(text)?;
         let wav = flite_sys::flite_text_to_wave(text.as_ptr(), voice);
         flite_sys::cst_wave_resample(wav, sample_rate);

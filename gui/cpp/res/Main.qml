@@ -52,6 +52,16 @@ ApplicationWindow {
                     checkState: Qt.Unchecked
                 }
 
+                Text {
+                    Layout.alignment: Qt.AlignRight
+                    text: qsTr("Voice")
+                }
+
+                ComboBox {
+                    id: selectedVoice
+                    model: backend.voices
+                }
+
                 Button {
                     Layout.alignment: Qt.AlignCenter
                     text: qsTr("Run loop")
@@ -59,22 +69,27 @@ ApplicationWindow {
                     Layout.columnSpan: settings.columns
 
                     onClicked: {
-                        backend.RunLoop(inputText.text, numIters.value, play.checkState)
+                        backend.RunLoop(inputText.text, numIters.value, play.checkState, backend.voices[selectedVoice.currentIndex])
                     }
                 }
 
             }
         }
 
-        TextEdit {
-            id: outputText
-
+        ScrollView {
             Layout.fillHeight: true
 
-            text: backend.output
-            readOnly: true
-            wrapMode: Text.WordWrap
-            selectByMouse: true
+            ListView {
+                model: backend.output
+                delegate: TextEdit {
+                    id: outputText
+
+                    text: modelData
+                    readOnly: true
+                    wrapMode: Text.WordWrap
+                    selectByMouse: true
+                }
+            }
         }
     }
 }

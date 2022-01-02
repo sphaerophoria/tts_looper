@@ -3,6 +3,7 @@ use std::convert::TryInto;
 use std::ffi::c_void;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
+use thiserror::Error;
 
 mod imp {
     #![allow(non_snake_case)]
@@ -17,6 +18,7 @@ pub enum GuiRequest {
         text: String,
         num_iters: i32,
         play_audio: bool,
+        voice: String,
     },
     Shutdown,
 }
@@ -48,24 +50,60 @@ pub struct GuiHandle {
 
 impl GuiHandle {
     pub fn push_output(&self, text: &str) {
-        let text_len = text.len().try_into().expect("usize does not fit in u64");
         unsafe {
-            imp::PushOutput(**self.handle, text.as_ptr(), text_len);
+            imp::PushOutput(**self.handle, to_gui_string(text));
         }
     }
 
-    pub fn reset_output(&self) {
+    pub fn push_loop_start(&self, text: &str, voice: &str, num_iters: i32) {
         unsafe {
-            imp::ResetOutput(**self.handle);
+            imp::PushLoopStart(**self.handle, to_gui_string(text), to_gui_string(voice), num_iters);
+        }
+    }
+
+    pub fn push_error(&self, error: &str) {
+        unsafe {
+            imp::PushError(**self.handle, to_gui_string(error));
         }
     }
 }
 
-pub fn run(tx: Sender<GuiRequest>) -> GuiHandle {
+fn to_gui_string(s: &str) -> imp::String {
+    let text_len = s.len().try_into().expect("usize does not fit in u64");
+    imp::String {
+        data: s.as_ptr(),
+        len: text_len,
+    }
+}
+
+#[derive(Error, Debug)]
+enum GuiStringParseError {
+    #[error("Invalid string length")]
+    InvalidLen,
+    #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+}
+
+fn parse_gui_string(s: &imp::String) -> Result<&str, GuiStringParseError> {
+    unsafe {
+        let len = s.len.try_into().map_err(|_| GuiStringParseError::InvalidLen)?;
+        let slice = std::slice::from_raw_parts(s.data, len);
+        std::str::from_utf8(slice).map_err(GuiStringParseError::Utf8Error)
+    }
+}
+
+
+pub fn run(tx: Sender<GuiRequest>, voices: &[&str]) -> GuiHandle {
+    let gui_voices = voices.into_iter()
+        .map(|s| to_gui_string(*s))
+        .collect::<Vec<_>>();
+    
     let handle = unsafe {
         imp::MakeGui(imp::GuiCallbacks {
             start_tts_loop: Some(start_tts_loop),
-        })
+        },
+        gui_voices.as_ptr(),
+        gui_voices.len().try_into().expect("Usize does not fit in u64"))
     };
 
     let handle = Arc::new(ImpHandle { handle });
@@ -88,34 +126,35 @@ unsafe fn data_to_inner(data: *const c_void) -> &'static Sender<GuiRequest> {
 }
 
 unsafe extern "C" fn start_tts_loop(
-    text: *const u8,
-    len: u64,
+    text: imp::String,
     num_iters: i32,
     play: bool,
+    voice: imp::String,
     data: *const c_void,
 ) {
     let tx = data_to_inner(data);
-    let len = match len.try_into() {
-        Ok(len) => len,
+
+    let text = match parse_gui_string(&text) {
+        Ok(s) => s,
         Err(e) => {
-            error!("Could not convert {} to usize: {}", len, e);
+            error!("Invalid gui string: {}", e);
             return;
         }
     };
 
-    let slice = std::slice::from_raw_parts(text, len);
-    let s = match std::str::from_utf8(slice) {
+    let voice = match parse_gui_string(&voice) {
         Ok(s) => s,
         Err(e) => {
-            error!("Invalid utf8 input: {}", e);
+            error!("Invalid gui string: {}", e);
             return;
         }
     };
 
     let res = tx.send(GuiRequest::Start {
-        text: s.to_string(),
+        text: text.to_string(),
         num_iters,
         play_audio: play,
+        voice: voice.to_string(),
     });
 
     if let Err(e) = res {

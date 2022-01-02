@@ -383,6 +383,7 @@ dependencies = [
  "bindgen 0.59.2",
  "cmake",
  "log",
+ "thiserror",
  "tts-loop",
 ]
 
