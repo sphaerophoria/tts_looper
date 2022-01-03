@@ -1,6 +1,7 @@
-use channel::Request;
+use channel::{Receiver, Request};
 use deepspeech::{errors::DeepspeechError, Model as DsModel};
 use flite::FliteWav;
+use gui::GuiHandle;
 use log::error;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::convert::TryInto;
@@ -13,9 +14,11 @@ pub mod gui;
 
 pub struct TtsLooper {
     stt_model: DsModel,
+    audio: AudioPlayback,
     sample_rate: i32,
     text: String,
     voice: String,
+    enable_audio: bool,
     buf: Option<FliteWav>,
 }
 
@@ -41,13 +44,16 @@ impl TtsLooper {
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("res/deepspeech-0.9.3-models.tflite");
         let stt_model = DsModel::load_from_files(&path)?;
         let sample_rate = stt_model.get_sample_rate();
+        let audio = AudioPlayback::new()?;
         let voice = flite::list_voices()[0];
         Ok(TtsLooper {
             stt_model,
+            audio,
             sample_rate,
             text: String::new(),
             voice: voice.to_string(),
             buf: None,
+            enable_audio: false,
         })
     }
 
@@ -65,6 +71,19 @@ impl TtsLooper {
             flite::text_to_wave(self.text.clone(), self.sample_rate, self.voice.clone())
                 .map_err(Error::TtsError)?,
         );
+        Ok(())
+    }
+
+    pub fn enable_audio(&mut self, enable: bool) {
+        self.enable_audio = enable;
+    }
+
+    pub fn play_audio(&mut self) -> Result<(), Error> {
+        if self.enable_audio {
+            if let Some(buf) = &self.buf {
+                self.audio.play_wav(buf)?;
+            }
+        }
         Ok(())
     }
 
@@ -135,67 +154,61 @@ impl AudioPlayback {
     }
 }
 
+fn exec_request(
+    looper: &mut TtsLooper,
+    gui: &GuiHandle,
+    req: Request,
+    req_rx: &Receiver,
+) -> Result<bool, Error> {
+    match req {
+        Request::SetText { text } => {
+            looper.set_text(text);
+        }
+        Request::LogStart { num_iters } => {
+            gui.push_loop_start(looper.get_text(), looper.get_voice(), num_iters);
+        }
+        Request::SetVoice { voice } => {
+            looper.set_voice(voice);
+        }
+        Request::EnableAudio { enable } => {
+            looper.enable_audio(enable);
+        }
+        Request::RunTts => {
+            looper.text_to_speech()?;
+        }
+        Request::PlayAudio => {
+            looper.play_audio()?;
+        }
+        Request::RunStt => {
+            let res = looper.speech_to_text()?;
+            gui.push_output(res);
+        }
+        Request::Cancel => {
+            if req_rx.execute_cancel() {
+                gui.push_cancel();
+            }
+        }
+        Request::Shutdown => {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 pub fn run() -> Result<(), Error> {
     let (req_tx, req_rx) = channel::channel();
     let gui = gui::run(req_tx, &flite::list_voices());
     let mut looper = TtsLooper::new().expect("Failed to construct tts looper");
-    let mut play_audio = false;
-    let mut audio = AudioPlayback::new()?;
 
     loop {
         let req = req_rx.recv();
-        match req {
-            Request::SetText { text } => {
-                looper.set_text(text);
-            }
-            Request::LogStart { num_iters } => {
-                gui.push_loop_start(looper.get_text(), looper.get_voice(), num_iters);
-            }
-            Request::SetVoice { voice } => {
-                looper.set_voice(voice);
-            }
-            Request::EnableAudio { enable } => {
-                play_audio = enable;
-            }
-            Request::RunTts => {
-                match looper.text_to_speech() {
-                    Ok(w) => w,
-                    Err(e) => {
-                        error!("{}", e);
-                        gui.push_error(&e.to_string());
-                    }
-                };
-            }
-            Request::PlayAudio => {
-                if play_audio {
-                    if let Some(wav) = looper.get_wav() {
-                        if let Err(e) = audio.play_wav(wav) {
-                            let err = format!("Failed to play audio: {}", e);
-                            error!("{}", err);
-                            gui.push_error(&err);
-                        }
-                    }
-                }
-            }
-            Request::RunStt => {
-                let res = match looper.speech_to_text() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("{}", e);
-                        gui.push_error(&e.to_string());
-                        continue;
-                    }
-                };
-
-                gui.push_output(res);
-            }
-            Request::Cancel => {
-                if req_rx.execute_cancel() {
-                    gui.push_cancel();
-                }
-            }
-            Request::Shutdown => {
-                break;
+        match exec_request(&mut looper, &gui, req, &req_rx) {
+            Ok(true) => break,
+            Ok(false) => (),
+            Err(e) => {
+                error!("{}", e);
+                gui.push_error(&e.to_string());
             }
         }
     }
