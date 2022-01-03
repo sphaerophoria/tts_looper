@@ -1,6 +1,9 @@
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick 2.15
+import Qt.labs.platform 1.1
+
+
 
 ApplicationWindow {
     title: qsTr("Tts looper")
@@ -27,78 +30,120 @@ ApplicationWindow {
 
                 ColumnLayout {
                     Text {
-                        text: qsTr("Tts text")
+                        text: qsTr("TTS text")
+                        font.bold: true
                     }
 
-                    TextField {
-                        id: inputText
+                    ScrollView {
                         Layout.fillWidth: true
                         Layout.minimumHeight: 200
-                        placeholderText: qsTr("Tts text")
+                        Layout.maximumHeight: settings.height
+
+                        Rectangle {
+                            border.color: "lightgrey"
+                            anchors.fill: parent
+
+                            TextArea {
+                                id: inputText
+
+                                anchors.fill: parent
+                                anchors.margins: 3
+
+                                verticalAlignment: TextInput.AlignTop
+                                placeholderText: qsTr("Tts text")
+                                wrapMode: TextInput.Wrap
+                            }
+                        }
                     }
                 }
 
-                GridLayout {
-                    id: settings
-                    columns: 2
+                ColumnLayout {
+                    GridLayout {
+                        id: settings
+                        columns: 2
 
-                    Text {
-                        Layout.alignment: Qt.AlignRight
-                        text: qsTr("Number of iterations")
-                    }
-
-                    SpinBox {
-                        Layout.alignment: Qt.AlignLeft
-                        id: numIters
-                        value: 10
-                    }
-
-                    Text {
-                        Layout.alignment: Qt.AlignRight
-                        text: qsTr("Play audio")
-                    }
-
-                    CheckBox {
-                        Layout.alignment: Qt.AlignLeft
-                        Layout.leftMargin: 0
-                        id: play
-                        checkState: Qt.Unchecked
-
-                        onCheckStateChanged: {
-                            backend.EnableAudio(checkState)
+                        Text {
+                            Layout.alignment: Qt.AlignRight
+                            text: qsTr("Number of iterations")
                         }
-                    }
 
-                    Text {
-                        Layout.alignment: Qt.AlignRight
-                        text: qsTr("Voice")
-                    }
-
-                    ComboBox {
-                        Layout.alignment: Qt.AlignLeft
-                        id: selectedVoice
-                        model: backend.voices
-
-                        onCurrentIndexChanged: {
-                            backend.SetVoice(currentIndex)
+                        SpinBox {
+                            Layout.alignment: Qt.AlignLeft
+                            id: numIters
+                            value: 10
                         }
-                    }
 
-                    Button {
-                        Layout.alignment: Qt.AlignRight
-                        text: qsTr("Run loop")
-
-                        onClicked: {
-                            backend.RunLoop(inputText.text, numIters.value)
+                        Text {
+                            Layout.alignment: Qt.AlignRight
+                            text: qsTr("Play audio")
                         }
+
+                        CheckBox {
+                            Layout.alignment: Qt.AlignLeft
+                            Layout.leftMargin: 0
+                            id: play
+                            checkState: Qt.Unchecked
+
+                            onCheckStateChanged: {
+                                backend.EnableAudio(checkState)
+                            }
+                        }
+
+                        Text {
+                            Layout.alignment: Qt.AlignRight
+                            text: qsTr("Voice")
+                        }
+
+                        ComboBox {
+                            Layout.alignment: Qt.AlignLeft
+                            id: selectedVoice
+                            model: backend.voices
+
+                            onCurrentIndexChanged: {
+                                backend.SetVoice(currentIndex)
+                            }
+                        }
+
                     }
 
-                    Button {
-                        Layout.alignment: Qt.AlignLeft
-                        text: qsTr("Cancel")
+                    RowLayout {
+                        Button {
+                            text: qsTr("Cancel")
 
-                        onClicked: {
-                            backend.Cancel()
+                            onClicked: {
+                                backend.Cancel()
+                            }
+                        }
+
+                        Button {
+                            text: qsTr("Run loop")
+
+                            onClicked: {
+                                backend.RunLoop(inputText.text, numIters.value)
+                            }
+                        }
+
+                        Button {
+                            text: qsTr("Save")
+
+                            onClicked: {
+                                fileDialog.file = ""
+                                fileDialog.open()
+                            }
+
+                            FileDialog {
+                                id: fileDialog
+                                file: ""
+                                folder: StandardPaths.writableLocation(StandardPaths.DocumentsLocation)
+                                fileMode: FileDialog.SaveFile
+                                nameFilters: [ "Wav files (*.wav)"]
+
+                                onVisibleChanged: {
+                                    if (file != "") {
+                                        backend.Save(file)
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -119,18 +164,60 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: 2
 
+                    function updateSelectionEnd() {
+                        var yVal = mouseArea.mouseY + contentY
+                        var idx = outputView.indexAt(0, yVal);
+                        outputView.model.setSelectionEnd(idx)
+                    }
+
                     clip: true
                     verticalLayoutDirection: ListView.BottomToTop
 
                     model: backend.output
-                    delegate: TextEdit {
-                        id: outputText
+                    delegate: Rectangle {
+                        color: selected ? "lightsteelblue" : "white"
 
-                        text: display
-                        textFormat: TextEdit.RichText
+                        height: outputText.height
+                        width: outputView.width
 
-                        readOnly: true
-                        selectByMouse: true
+                        Text {
+                            id: outputText
+
+                            text: display
+                            textFormat: TextEdit.RichText
+                        }
+                    }
+
+                    onContentYChanged: {
+                        if (mouseArea.pressed) {
+                            updateSelectionEnd()
+                        }
+
+                    }
+
+                    MouseArea {
+                        id: mouseArea
+
+                        anchors.fill: parent
+
+                        preventStealing: true
+                        propagateComposedEvents: false
+
+
+                        onPressed: {
+                            var contentY = mouseY + outputView.contentY
+                            var idx = outputView.indexAt(0, contentY);
+                            outputView.model.setSelectionStart(idx)
+                        }
+
+                        onPositionChanged: {
+                            outputView.updateSelectionEnd()
+                        }
+                    }
+
+                    Shortcut {
+                        sequence: StandardKey.Copy
+                        onActivated: backend.Copy()
                     }
 
                     ScrollBar.vertical : ScrollBar {}

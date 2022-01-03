@@ -1,6 +1,7 @@
 use log::error;
 use std::convert::TryInto;
 use std::ffi::c_void;
+use std::path::Path;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -68,6 +69,18 @@ impl GuiHandle {
             imp::PushCancel(**self.handle);
         }
     }
+
+    pub fn push_voice_change(&self, voice: &str) {
+        unsafe {
+            imp::PushVoiceChange(**self.handle, to_gui_string(voice));
+        }
+    }
+
+    pub fn push_file_saved(&self, path: &Path) {
+        unsafe {
+            imp::PushFileSaved(**self.handle, to_gui_string(&path.display().to_string()));
+        }
+    }
 }
 
 fn to_gui_string(s: &str) -> imp::String {
@@ -112,6 +125,7 @@ pub fn run(tx: Sender, voices: &[&str]) -> GuiHandle {
                 set_voice: Some(set_voice),
                 enable_audio: Some(enable_audio),
                 cancel: Some(cancel),
+                save: Some(save),
             },
             gui_voices.as_ptr(),
             gui_voices
@@ -158,10 +172,10 @@ unsafe extern "C" fn start_tts_loop(text: imp::String, num_iters: i32, data: *co
     };
 
     data.tx.send(Request::Cancel);
-    data.tx.send(Request::SetText {
+    data.tx.send(Request::Initialize {
         text: text.to_string(),
+        num_iters,
     });
-    data.tx.send(Request::LogStart { num_iters });
     for _ in 0..num_iters {
         data.tx.send(Request::RunTts);
         data.tx.send(Request::PlayAudio);
@@ -193,4 +207,20 @@ unsafe extern "C" fn set_voice(voice: imp::String, data: *const c_void) {
 unsafe extern "C" fn enable_audio(enable: bool, data: *const c_void) {
     let data = data_to_inner(data);
     data.tx.send(Request::EnableAudio { enable });
+}
+
+unsafe extern "C" fn save(path: imp::String, data: *const c_void) {
+    let data = data_to_inner(data);
+
+    let path = match parse_gui_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            let err = format!("Invalid gui string: {}", e);
+            error!("{}", err);
+            imp::PushError(**data.handle, to_gui_string(&err));
+            return;
+        }
+    };
+
+    data.tx.send(Request::Save { path: path.into() });
 }

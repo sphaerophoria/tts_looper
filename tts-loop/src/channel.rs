@@ -1,15 +1,26 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
 
 #[derive(Debug)]
 pub enum Request {
-    SetText { text: String },
-    LogStart { num_iters: i32 },
+    Initialize {
+        text: String,
+        // Currently used only for logging
+        num_iters: i32,
+    },
     RunTts,
     PlayAudio,
     RunStt,
-    SetVoice { voice: String },
-    EnableAudio { enable: bool },
+    Save {
+        path: PathBuf,
+    },
+    SetVoice {
+        voice: String,
+    },
+    EnableAudio {
+        enable: bool,
+    },
     Cancel,
     Shutdown,
 }
@@ -18,11 +29,11 @@ impl Request {
     fn is_priority_action(&self) -> bool {
         // Priority actions will always happen before non-priority actions. Priority actions cannot be canceled
         match *self {
-            Request::SetText { .. }
-            | Request::LogStart { .. }
+            Request::Initialize { .. }
             | Request::RunTts
             | Request::RunStt
-            | Request::PlayAudio => false,
+            | Request::PlayAudio
+            | Request::Save { .. } => false,
             Request::SetVoice { .. }
             | Request::Cancel
             | Request::EnableAudio { .. }

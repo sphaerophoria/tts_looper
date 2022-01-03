@@ -1006,6 +1006,7 @@ dependencies = [
  "deepspeech",
  "env_logger",
  "flite",
+ "hound",
  "log",
  "rodio",
  "thiserror",

@@ -10,6 +10,7 @@ fn main() -> Result<(), ()> {
     println!("cargo:rustc-link-lib=dylib=Qt5Gui");
     println!("cargo:rustc-link-lib=dylib=Qt5Qml");
     println!("cargo:rustc-link-lib=dylib=Qt5Quick");
+    println!("cargo:rustc-link-lib=dylib=Qt5QuickControls2");
 
     let bindings = bindgen::builder().header("src/gui/cpp/gui.h").generate()?;
 

@@ -2,6 +2,7 @@ use channel::{Receiver, Request};
 use deepspeech::{errors::DeepspeechError, Model as DsModel};
 use flite::FliteWav;
 use gui::GuiHandle;
+use hound::{WavSpec, WavWriter};
 use log::error;
 use rodio::{buffer::SamplesBuffer, OutputStream, Sink};
 use std::convert::TryInto;
@@ -14,12 +15,12 @@ pub mod gui;
 
 pub struct TtsLooper {
     stt_model: DsModel,
-    audio: AudioPlayback,
+    playback: AudioPlayback,
     sample_rate: i32,
-    text: String,
     voice: String,
     enable_audio: bool,
-    buf: Option<FliteWav>,
+    text: String,
+    full_wav: Vec<FliteWav>,
 }
 
 #[derive(ThisError, Debug)]
@@ -48,17 +49,17 @@ impl TtsLooper {
         let voice = flite::list_voices()[0];
         Ok(TtsLooper {
             stt_model,
-            audio,
+            playback: audio,
             sample_rate,
             text: String::new(),
             voice: voice.to_string(),
-            buf: None,
             enable_audio: false,
+            full_wav: Vec::new(),
         })
     }
 
     pub fn speech_to_text(&mut self) -> Result<&str, Error> {
-        if let Some(buf) = &self.buf {
+        if let Some(buf) = self.full_wav.last() {
             self.text = self.stt_model.speech_to_text(&*buf)?;
             return Ok(&self.text);
         }
@@ -67,10 +68,11 @@ impl TtsLooper {
     }
 
     pub fn text_to_speech(&mut self) -> Result<(), Error> {
-        self.buf = Some(
+        self.full_wav.push(
             flite::text_to_wave(self.text.clone(), self.sample_rate, self.voice.clone())
                 .map_err(Error::TtsError)?,
         );
+
         Ok(())
     }
 
@@ -80,8 +82,8 @@ impl TtsLooper {
 
     pub fn play_audio(&mut self) -> Result<(), Error> {
         if self.enable_audio {
-            if let Some(buf) = &self.buf {
-                self.audio.play_wav(buf)?;
+            if let Some(buf) = self.full_wav.last() {
+                self.playback.play_wav(buf)?;
             }
         }
         Ok(())
@@ -89,6 +91,11 @@ impl TtsLooper {
 
     pub fn set_text(&mut self, text: String) {
         self.text = text;
+    }
+
+    pub fn reset_state(&mut self, text: String) {
+        self.text = text;
+        self.full_wav.clear();
     }
 
     pub fn get_text(&self) -> &str {
@@ -103,8 +110,31 @@ impl TtsLooper {
         &self.voice
     }
 
-    pub fn get_wav(&self) -> &Option<FliteWav> {
-        &self.buf
+    pub fn get_wav(&self) -> Option<&FliteWav> {
+        self.full_wav.last()
+    }
+
+    pub fn save_full_wav<P: AsRef<Path>>(&self, path: P) {
+        let first_wav = match self.full_wav.first() {
+            Some(w) => w,
+            None => return,
+        };
+
+        // FIXME: Evil unwraps
+        let wav_spec = WavSpec {
+            channels: first_wav.num_channels().try_into().unwrap(),
+            sample_rate: first_wav.sample_rate().try_into().unwrap(),
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+
+        let mut writer = WavWriter::create(path, wav_spec).unwrap();
+        for samples in &self.full_wav {
+            for sample in &**samples {
+                // FIXME: handle error here
+                writer.write_sample(*sample);
+            }
+        }
     }
 }
 
@@ -161,14 +191,13 @@ fn exec_request(
     req_rx: &Receiver,
 ) -> Result<bool, Error> {
     match req {
-        Request::SetText { text } => {
-            looper.set_text(text);
-        }
-        Request::LogStart { num_iters } => {
+        Request::Initialize { text, num_iters } => {
+            looper.reset_state(text);
             gui.push_loop_start(looper.get_text(), looper.get_voice(), num_iters);
         }
         Request::SetVoice { voice } => {
-            looper.set_voice(voice);
+            looper.set_voice(voice.clone());
+            gui.push_voice_change(&voice);
         }
         Request::EnableAudio { enable } => {
             looper.enable_audio(enable);
@@ -182,6 +211,10 @@ fn exec_request(
         Request::RunStt => {
             let res = looper.speech_to_text()?;
             gui.push_output(res);
+        }
+        Request::Save { path } => {
+            looper.save_full_wav(&path);
+            gui.push_file_saved(&path);
         }
         Request::Cancel => {
             if req_rx.execute_cancel() {
