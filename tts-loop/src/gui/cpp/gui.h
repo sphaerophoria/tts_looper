@@ -18,18 +18,17 @@ typedef struct GuiCallbacks {
   void (*set_voice)(String voice, const void* data);
   void (*enable_audio)(bool enable, const void* data);
   void (*cancel)(const void* data);
+  void (*start_recording)(const void* data);
+  void (*end_recording)(const void* data);
   void (*save)(String path, const void* data);
 } GuiCallbacks;
 
 Gui* MakeGui(GuiCallbacks callbacks, const String* voices, uint64_t num_voices);
 void DestroyGui(Gui* gui);
 
-void PushLoopStart(Gui* gui, String text, String voice, int32_t num_iters);
 void PushOutput(Gui* gui, String text);
-void PushError(Gui* gui, String error);
-void PushCancel(Gui* gui);
-void PushVoiceChange(Gui* gui, String voice);
-void PushFileSaved(Gui* gui, String path);
+void PushRawOutput(Gui* gui, String text);
+void PushInputText(Gui* gui, String text);
 
 void Exec(Gui* gui, const void* data);
 

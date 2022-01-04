@@ -108,6 +108,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
 
 [[package]]
+name = "buf-min"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4531c8a9fe2fb94e0d2afdf6bb4effd4797baf98dd26b6e20be71a92ac78e8d"
+
+[[package]]
 name = "bumpalo"
 version = "3.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -738,6 +744,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "once_cell"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da32515d9f6e6e489d7bc9d84c71b060db7247dc035bbe44eac88cf87486d8d5"
+
+[[package]]
 name = "parking_lot"
 version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1003,13 +1015,15 @@ version = "0.1.0"
 dependencies = [
  "bindgen 0.59.2",
  "cmake",
+ "cpal",
  "deepspeech",
  "env_logger",
  "flite",
  "hound",
  "log",
- "rodio",
+ "once_cell",
  "thiserror",
+ "v_htmlescape",
 ]
 
 [[package]]
@@ -1023,6 +1037,35 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
+
+[[package]]
+name = "v_escape"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79d297315e8ca0b98255614f409699ea189e5929e820f07f69afcebf96c41f9b"
+dependencies = [
+ "buf-min",
+ "v_escape_derive",
+]
+
+[[package]]
+name = "v_escape_derive"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fe81cf194472e6ddd6545f8e91ee9780de636194c2e896b8ac201ac78389809"
+dependencies = [
+ "syn",
+]
+
+[[package]]
+name = "v_htmlescape"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04b32732bcd549ad15fcb01ee63ad03dd6a0289e9ba72b8164707d1f9fa80478"
+dependencies = [
+ "cfg-if",
+ "v_escape",
+]
 
 [[package]]
 name = "vec_map"

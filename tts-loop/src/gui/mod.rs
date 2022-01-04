@@ -1,11 +1,18 @@
-use log::error;
-use std::convert::TryInto;
-use std::ffi::c_void;
-use std::path::Path;
-use std::sync::Arc;
+use crate::{
+    gui::rich_text::{Color, Format},
+    Request,
+};
+
+use log::{error, Level};
 use thiserror::Error;
 
-use crate::channel::{Request, Sender};
+use std::{
+    convert::TryInto,
+    ffi::c_void,
+    sync::{mpsc::Sender, Arc},
+};
+
+mod rich_text;
 
 mod imp {
     #![allow(non_snake_case)]
@@ -36,49 +43,38 @@ impl Drop for ImpHandle {
 unsafe impl Send for ImpHandle {}
 unsafe impl Sync for ImpHandle {}
 
-pub struct GuiHandle {
+pub(crate) struct GuiHandle {
     handle: Arc<ImpHandle>,
 }
 
 impl GuiHandle {
-    pub fn push_output(&self, text: &str) {
+    pub(crate) fn push_output(&self, text: &str) {
         unsafe {
-            imp::PushOutput(**self.handle, to_gui_string(text));
+            imp::PushOutput(**self.handle, to_gui_string(&text));
         }
     }
 
-    pub fn push_loop_start(&self, text: &str, voice: &str, num_iters: i32) {
+    pub(crate) fn push_input_text(&self, text: &str) {
         unsafe {
-            imp::PushLoopStart(
-                **self.handle,
-                to_gui_string(text),
-                to_gui_string(voice),
-                num_iters,
-            );
+            imp::PushInputText(**self.handle, to_gui_string(text));
         }
     }
 
-    pub fn push_error(&self, error: &str) {
-        unsafe {
-            imp::PushError(**self.handle, to_gui_string(error));
-        }
-    }
+    pub(crate) fn log(&self, text: &str, level: Level) {
+        let encoded = Format::bold(Format::text(text));
 
-    pub fn push_cancel(&self) {
-        unsafe {
-            imp::PushCancel(**self.handle);
-        }
-    }
+        let encoded = match level {
+            Level::Trace => Format::color(Color::Green, encoded),
+            Level::Debug => Format::color(Color::Green, encoded),
+            Level::Info => Format::color(Color::Blue, encoded),
+            Level::Warn => Format::color(Color::Orange, encoded),
+            Level::Error => Format::color(Color::Red, encoded),
+        };
 
-    pub fn push_voice_change(&self, voice: &str) {
-        unsafe {
-            imp::PushVoiceChange(**self.handle, to_gui_string(voice));
-        }
-    }
+        let text = encoded.into_string();
 
-    pub fn push_file_saved(&self, path: &Path) {
         unsafe {
-            imp::PushFileSaved(**self.handle, to_gui_string(&path.display().to_string()));
+            imp::PushRawOutput(**self.handle, to_gui_string(&text));
         }
     }
 }
@@ -112,10 +108,10 @@ fn parse_gui_string(s: &imp::String) -> Result<&str, GuiStringParseError> {
 
 struct GuiData {
     handle: Arc<ImpHandle>,
-    tx: Sender,
+    tx: Sender<Request>,
 }
 
-pub fn run(tx: Sender, voices: &[&str]) -> GuiHandle {
+pub(crate) fn run(tx: Sender<Request>, voices: &[&str]) -> GuiHandle {
     let gui_voices = voices.iter().map(|s| to_gui_string(*s)).collect::<Vec<_>>();
 
     let handle = unsafe {
@@ -126,6 +122,8 @@ pub fn run(tx: Sender, voices: &[&str]) -> GuiHandle {
                 enable_audio: Some(enable_audio),
                 cancel: Some(cancel),
                 save: Some(save),
+                start_recording: Some(start_recording),
+                end_recording: Some(end_recording),
             },
             gui_voices.as_ptr(),
             gui_voices
@@ -147,7 +145,7 @@ pub fn run(tx: Sender, voices: &[&str]) -> GuiHandle {
                 &gui_data as *const GuiData as *const c_void,
             )
         };
-        gui_data.tx.send(Request::Shutdown);
+        let _ = gui_data.tx.send(Request::Shutdown);
     });
 
     GuiHandle { handle }
@@ -166,26 +164,19 @@ unsafe extern "C" fn start_tts_loop(text: imp::String, num_iters: i32, data: *co
         Err(e) => {
             let err = format!("Invalid gui string: {}", e);
             error!("{}", err);
-            imp::PushError(**data.handle, to_gui_string(&err));
             return;
         }
     };
 
-    data.tx.send(Request::Cancel);
-    data.tx.send(Request::Initialize {
+    let _ = data.tx.send(Request::TtsLoop {
         text: text.to_string(),
         num_iters,
     });
-    for _ in 0..num_iters {
-        data.tx.send(Request::RunTts);
-        data.tx.send(Request::PlayAudio);
-        data.tx.send(Request::RunStt);
-    }
 }
 
 unsafe extern "C" fn cancel(data: *const c_void) {
     let data = data_to_inner(data);
-    data.tx.send(Request::Cancel);
+    let _ = data.tx.send(Request::Cancel);
 }
 
 unsafe extern "C" fn set_voice(voice: imp::String, data: *const c_void) {
@@ -193,20 +184,18 @@ unsafe extern "C" fn set_voice(voice: imp::String, data: *const c_void) {
     let voice = match parse_gui_string(&voice) {
         Ok(s) => s,
         Err(e) => {
-            let err = format!("Invalid gui string: {}", e);
-            error!("{}", err);
-            imp::PushError(**data.handle, to_gui_string(&err));
+            error!("Invalid gui string: {}", e);
             return;
         }
     };
-    data.tx.send(Request::SetVoice {
+    let _ = data.tx.send(Request::SetVoice {
         voice: voice.to_string(),
     });
 }
 
 unsafe extern "C" fn enable_audio(enable: bool, data: *const c_void) {
     let data = data_to_inner(data);
-    data.tx.send(Request::EnableAudio { enable });
+    let _ = data.tx.send(Request::EnableAudio { enable });
 }
 
 unsafe extern "C" fn save(path: imp::String, data: *const c_void) {
@@ -215,12 +204,20 @@ unsafe extern "C" fn save(path: imp::String, data: *const c_void) {
     let path = match parse_gui_string(&path) {
         Ok(s) => s,
         Err(e) => {
-            let err = format!("Invalid gui string: {}", e);
-            error!("{}", err);
-            imp::PushError(**data.handle, to_gui_string(&err));
+            error!("Invalid gui string: {}", e);
             return;
         }
     };
 
-    data.tx.send(Request::Save { path: path.into() });
+    let _ = data.tx.send(Request::Save { path: path.into() });
+}
+
+unsafe extern "C" fn start_recording(data: *const c_void) {
+    let data = data_to_inner(data);
+    let _ = data.tx.send(Request::StartRecording);
+}
+
+unsafe extern "C" fn end_recording(data: *const c_void) {
+    let data = data_to_inner(data);
+    let _ = data.tx.send(Request::EndRecording);
 }

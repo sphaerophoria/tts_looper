@@ -49,6 +49,15 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 anchors.margins: 3
 
+                                Component.onCompleted: {
+                                    backend.InputText.connect(updateText)
+
+                                }
+
+                                function updateText(s) {
+                                    inputText.text = s
+                                }
+
                                 verticalAlignment: TextInput.AlignTop
                                 placeholderText: qsTr("Tts text")
                                 wrapMode: TextInput.Wrap
@@ -143,6 +152,22 @@ ApplicationWindow {
                                         backend.Save(file)
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Button {
+                            property bool recording: false
+                            text: recording ? qsTr("End recording") :  qsTr("Record input")
+
+                            onClicked: {
+                                if (recording) {
+                                    backend.EndRecording()
+                                } else {
+                                    backend.StartRecording()
+                                }
+                                recording = !recording
                             }
                         }
                     }

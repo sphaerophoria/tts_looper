@@ -164,62 +164,23 @@ class Backend : public QObject {
     PushOutputRaw(text.toHtmlEscaped());
   }
 
-  void PushLoopStart(const QString& text, const QString& voice,
-                     int32_t numIters) {
+  void PushInputText(const QString& text) {
+    if (QThread::currentThread() != thread()) {
+      QMetaObject::invokeMethod(this, [=] { PushInputText(text); });
+      return;
+    }
+
+    emit InputText(text);
+  }
+
+  void PushOutputRaw(const QString& text) {
     if (QThread::currentThread() != thread()) {
       QMetaObject::invokeMethod(this,
-                                [=] { PushLoopStart(text, voice, numIters); });
+                                [=] { PushOutputRaw(text); });
       return;
     }
 
-    auto output = tr("<b>Starting loop. Voice: %1, Iterations: %2<br>"
-                     "%3</b>")
-                      .arg(voice.toHtmlEscaped())
-                      .arg(numIters)
-                      .arg(text.toHtmlEscaped());
-
-    PushOutputRaw(output);
-  }
-
-  void PushError(const QString& error) {
-    if (QThread::currentThread() != thread()) {
-      QMetaObject::invokeMethod(this, [=] { PushError(error); });
-      return;
-    }
-
-    auto output = tr("<b><span style=\"color:red\">Error: %1</span></b>")
-                      .arg(error.toHtmlEscaped());
-    PushOutputRaw(output);
-  }
-
-  void PushCancel() {
-    if (QThread::currentThread() != thread()) {
-      QMetaObject::invokeMethod(this, [this] { PushCancel(); });
-      return;
-    }
-
-    auto output = tr("<b><span style=\"color:red\">Canceled</span></b>");
-    PushOutputRaw(output);
-  }
-
-  void PushVoiceChange(const QString& voice) {
-    if (QThread::currentThread() != thread()) {
-      QMetaObject::invokeMethod(this, [=] { PushVoiceChange(voice); });
-      return;
-    }
-
-    auto output = tr("<b>Voice changed: %1</b>").arg(voice.toHtmlEscaped());
-    PushOutputRaw(output);
-  }
-
-  void PushFileSaved(const QString& path) {
-    if (QThread::currentThread() != thread()) {
-      QMetaObject::invokeMethod(this, [=] { PushFileSaved(path); });
-      return;
-    }
-
-    auto output = tr("<b>Output saved to %1</b>").arg(path.toHtmlEscaped());
-    PushOutputRaw(output);
+    output_.addOutput(text);
   }
 
  public slots:
@@ -249,14 +210,22 @@ class Backend : public QObject {
     callbacks_.save(QStringToGuiString(path.toLocalFile()).s, data_);
   }
 
+  void StartRecording() {
+    callbacks_.start_recording(data_);
+  }
+
+  void EndRecording() {
+    callbacks_.end_recording(data_);
+  }
+
   QAbstractItemModel* Output() { return &output_; }
 
  signals:
   void OutputChanged();
   void VoicesChanged();
+  void InputText(QString text);
 
  private:
-  void PushOutputRaw(const QString& text) { output_.addOutput(text); }
   GuiCallbacks callbacks_;
   QStringList voices_;
   const void* data_;
@@ -302,40 +271,22 @@ void Exec(Gui* gui, const void* data) {
   gui->backend = nullptr;
 }
 
-void PushLoopStart(Gui* gui, String text, String voice, int32_t num_iters) {
-  if (gui->backend) {
-    gui->backend->PushLoopStart(GuiStringToQString(text),
-                                GuiStringToQString(voice), num_iters);
-  }
-}
-
 void PushOutput(Gui* gui, String text) {
   if (gui->backend) {
     gui->backend->PushOutput(GuiStringToQString(text));
   }
 }
 
-void PushError(Gui* gui, String error) {
+void PushInputText(Gui* gui, String text) {
   if (gui->backend) {
-    gui->backend->PushError(GuiStringToQString(error));
+    gui->backend->PushInputText(GuiStringToQString(text));
   }
+
 }
 
-void PushCancel(Gui* gui) {
+void PushRawOutput(Gui* gui, String text) {
   if (gui->backend) {
-    gui->backend->PushCancel();
-  }
-}
-
-void PushVoiceChange(Gui* gui, String voice) {
-  if (gui->backend) {
-    gui->backend->PushVoiceChange(GuiStringToQString(voice));
-  }
-}
-
-void PushFileSaved(Gui* gui, String path) {
-  if (gui->backend) {
-    gui->backend->PushFileSaved(GuiStringToQString(path));
+    gui->backend->PushOutputRaw(GuiStringToQString(text));
   }
 }
 
