@@ -78,14 +78,6 @@ class OutputModel : public QAbstractListModel {
   }
 
  public slots:
-  void clearSelection() {
-    auto tl = index(selection_start_);
-    auto br = index(selection_end_);
-    selection_start_ = -1;
-    selection_end_ = -1;
-    emit dataChanged(tl, br);
-  }
-
   void setSelectionStart(int start) {
     if (start < 0) {
       return;
@@ -95,7 +87,7 @@ class OutputModel : public QAbstractListModel {
     auto old_end = selection_end_;
 
     selection_start_ = start;
-    selection_end_ = start;
+    selection_end_ = -1;
 
     std::array<int, 3> vals{{old_start, old_end, start}};
 
